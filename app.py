@@ -53,7 +53,7 @@ engine = get_db_engine()
 st.sidebar.image("https://img.icons8.com/color/96/bus.png", width=70)
 st.sidebar.title("Transmetro Control")
 
-# Definición exacta de las opciones del menú
+# Nombres exactos de las opciones
 OPCION_LINEAS = "🗺️ Gestión de Líneas & Rutas"
 OPCION_BUSES = "🚌 Flota de Buses & Pilotos"
 OPCION_ESTACIONES = "🏢 Estaciones & Parqueos"
@@ -158,12 +158,14 @@ if menu == OPCION_LINEAS:
             with col_ag2:
                 st.subheader("🚌 Asignar Bus a esta Línea")
                 with engine.connect() as conn:
-                    buses_disp = pd.read_sql("""
+                    # Envolver la consulta con text() para corregir la sintaxis de parámetros
+                    query_buses = text("""
                         SELECT b.id_bus, b.numero_unidad, p.nombres || ' ' || p.apellidos as piloto
                         FROM bus b
                         JOIN piloto p ON p.id_bus_asociado = b.id_bus
                         WHERE b.id_linea IS NULL OR b.id_linea = :id_l;
-                    """, conn, params={"id_l": int(id_linea_sel)})
+                    """)
+                    buses_disp = pd.read_sql(query_buses, conn, params={"id_l": int(id_linea_sel)})
 
                 if not buses_disp.empty:
                     bus_sel = st.selectbox("Bus Disponible (Requiere Piloto):", buses_disp["numero_unidad"] + " - Piloto: " + buses_disp["piloto"])
@@ -217,25 +219,145 @@ if menu == OPCION_LINEAS:
 # -----------------------------------------------------------------------------
 elif menu == OPCION_BUSES:
     st.markdown('<p class="main-header">Gestión de Flota de Buses y Registro de Pilotos</p>', unsafe_allow_html=True)
-    st.info("Módulo de Flota activado correctamente.")
+
+    tab_flota, tab_crear_bus, tab_crear_piloto = st.tabs(["🚌 Ver Flota", "➕ Registrar Bus", "👨‍✈️ Registrar Piloto"])
+
+    with tab_flota:
+        with engine.connect() as conn:
+            df_flota = pd.read_sql("""
+                SELECT b.numero_unidad, b.placa, b.capacidad_pasajeros,
+                       p.nombre_parqueo as parqueo_asignado,
+                       COALESCE(pi.nombres || ' ' || pi.apellidos, '⚠️ SIN PILOTO') as piloto_asignado,
+                       COALESCE(l.nombre_linea, 'Sin Línea') as linea_actual
+                FROM bus b
+                JOIN parqueo p ON b.id_parqueo = p.id_parqueo
+                LEFT JOIN piloto pi ON pi.id_bus_asociado = b.id_bus
+                LEFT JOIN linea l ON b.id_linea = l.id_linea;
+            """, conn)
+        st.dataframe(df_flota, use_container_width=True)
+
+    with tab_crear_bus:
+        st.subheader("➕ Registrar Nuevo Bus")
+        with engine.connect() as conn:
+            parqueos = pd.read_sql("SELECT id_parqueo, nombre_parqueo FROM parqueo;", conn)
+
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            num_unidad = st.text_input("Número de Unidad (ej. TR-105):")
+            placa_bus = st.text_input("Número de Placa:", value="U-000TM")
+        with col_b2:
+            cap_bus = st.number_input("Capacidad de Pasajeros:", min_value=50, value=100, step=10)
+            parq_bus = st.selectbox("Parqueo Asignado (Obligatorio):", parqueos["nombre_parqueo"])
+            id_parq_bus = parqueos[parqueos["nombre_parqueo"] == parq_bus]["id_parqueo"].values[0]
+
+        if st.button("Guardar Bus"):
+            if num_unidad:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO bus (placa, numero_unidad, capacidad_pasajeros, id_parqueo)
+                            VALUES (:placa, :num, :cap, :id_p);
+                        """), {"placa": placa_bus, "num": num_unidad, "cap": int(cap_bus), "id_p": int(id_parq_bus)})
+                    st.success(f"Bus '{num_unidad}' registrado correctamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al registrar bus: {e}")
+
+    with tab_crear_piloto:
+        st.subheader("👨‍✈️ Registrar Nuevo Piloto")
+        with engine.connect() as conn:
+            buses_sin_piloto = pd.read_sql("""
+                SELECT b.id_bus, b.numero_unidad
+                FROM bus b LEFT JOIN piloto p ON p.id_bus_asociado = b.id_bus
+                WHERE p.id_piloto IS NULL;
+            """, conn)
+
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            dpi_piloto = st.text_input("DPI:")
+            nom_piloto = st.text_input("Nombres:")
+            ape_piloto = st.text_input("Apellidos:")
+            tel_piloto = st.text_input("Teléfono de Contacto:")
+        with col_p2:
+            residencia_piloto = st.text_input("Dirección de Residencia:")
+            educacion_piloto = st.text_input("Historial Educativo / Licencia:", value="Diversificado / Licencia Tipo A")
+            bus_asoc = st.selectbox("Asignar Bus Inicial (Opcional):", ["Sin Asignar"] + list(buses_sin_piloto["numero_unidad"]))
+
+        if st.button("Guardar Piloto"):
+            if dpi_piloto and nom_piloto:
+                try:
+                    id_b_asoc = None
+                    if bus_asoc != "Sin Asignar":
+                        id_b_asoc = int(buses_sin_piloto[buses_sin_piloto["numero_unidad"] == bus_asoc]["id_bus"].values[0])
+
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO piloto (dpi, nombres, apellidos, historial_educativo, direccion_residencia, telefono, id_bus_asociado)
+                            VALUES (:dpi, :nom, :ape, :edu, :dir, :tel, :id_b);
+                        """), {"dpi": dpi_piloto, "nom": nom_piloto, "ape": ape_piloto, "edu": educacion_piloto, "dir": residencia_piloto, "tel": tel_piloto, "id_b": id_b_asoc})
+                    st.success("Piloto registrado exitosamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar piloto: {e}")
 
 # -----------------------------------------------------------------------------
 # MÓDULO 3: ESTACIONES & PARQUEOS
 # -----------------------------------------------------------------------------
 elif menu == OPCION_ESTACIONES:
     st.markdown('<p class="main-header">Gestión de Estaciones y Parqueos</p>', unsafe_allow_html=True)
-    st.info("Módulo de Estaciones activado correctamente.")
+    with engine.connect() as conn:
+        df_estaciones = pd.read_sql("""
+            SELECT e.nombre as estacion, e.capacidad_maxima_pasajeros, m.nombre as municipalidad,
+                   COALESCE(p.nombre_parqueo, 'Sin Parqueo') as parqueo
+            FROM estacion e
+            JOIN municipalidad m ON e.id_municipalidad = m.id_municipalidad
+            LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion;
+        """, conn)
+    st.dataframe(df_estaciones, use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # MÓDULO 4: ACCESOS & GUARDIAS
 # -----------------------------------------------------------------------------
 elif menu == OPCION_GUARDIAS:
     st.markdown('<p class="main-header">Control de Seguridad en Accesos</p>', unsafe_allow_html=True)
-    st.info("Módulo de Guardias activado correctamente.")
+    with engine.connect() as conn:
+        df_guardias = pd.read_sql("""
+            SELECT e.nombre as estacion, a.nombre_acceso, STRING_AGG(g.nombres || ' ' || g.apellidos, ', ') as guardias
+            FROM acceso a
+            JOIN estacion e ON a.id_estacion = e.id_estacion
+            LEFT JOIN guardia g ON g.id_acceso = a.id_acceso
+            GROUP BY e.nombre, a.nombre_acceso;
+        """, conn)
+    st.dataframe(df_guardias, use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # MÓDULO 5: OPERADOR DE ESTACIÓN
 # -----------------------------------------------------------------------------
 elif menu == OPCION_OPERADOR:
     st.markdown('<p class="main-header">Puesto de Trabajo del Operador</p>', unsafe_allow_html=True)
-    st.info("Módulo Operador activado correctamente.")
+    with engine.connect() as conn:
+        estaciones_op = pd.read_sql("SELECT id_estacion, nombre, capacidad_maxima_pasajeros, aforo_actual_pasajeros FROM estacion ORDER BY nombre;", conn)
+
+    if not estaciones_op.empty:
+        est_sel = st.selectbox("Seleccionar Estación:", estaciones_op["nombre"])
+        datos_est = estaciones_op[estaciones_op["nombre"] == est_sel].iloc[0]
+
+        col_o1, col_o2 = st.columns(2)
+        with col_o1:
+            nuevo_aforo = st.number_input("Ocupación Actual:", min_value=0, value=int(datos_est["aforo_actual_pasajeros"]))
+            if st.button("Actualizar Ocupación"):
+                with engine.begin() as conn:
+                    conn.execute(text("UPDATE estacion SET aforo_actual_pasajeros = :a WHERE id_estacion = :id;"),
+                                 {"a": int(nuevo_aforo), "id": int(datos_est["id_estacion"])})
+                st.success("Aforo actualizado.")
+                st.rerun()
+
+        with col_o2:
+            cap = datos_est["capacidad_maxima_pasajeros"]
+            aforo = datos_est["aforo_actual_pasajeros"]
+            pct = (aforo / cap) * 100
+            st.metric("Ocupación", f"{aforo} / {cap}", f"{pct:.1f}%")
+            if aforo >= (cap * 1.5):
+                st.error("🚨 ALERTA DE SATURACIÓN (≥ 150%)")
+            elif aforo >= cap:
+                st.warning("⚠️ Capacidad nominal alcanzada")
