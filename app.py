@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from sqlalchemy import create_engine, text
 
 # Configuración de la página Web
 st.set_page_config(
@@ -19,23 +20,52 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# CONEXIÓN A LA BASE DE DATOS POSTGRESQL (Local o Cloud como Neon/Supabase)
+# CONEXIÓN A LA BASE DE DATOS POSTGRESQL (NEON.TECH)
 # -----------------------------------------------------------------------------
+@st.cache_resource
+def get_db_engine():
+    # Si existen secretos configurados en Streamlit Cloud, los usa; de lo contrario, usa las credenciales por defecto
+    if "postgres" in st.secrets:
+        cfg = st.secrets["postgres"]
+        db_url = f"postgresql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?sslmode=require"
+    else:
+        # Tus credenciales directas de Neon
+        user = "transmetro_db_owner"
+        password = "npg_q9AZrBWy8XSN"  # ⚠️ Coloca aquí tu contraseña de Neon
+        host = "ep-tiny-cloud-b4h9eg0r-pooler.c-6.us-east-2.aws.neon.tech"
+        port = 5432
+        db_name = "transmetro_db"
+        db_url = f"postgresql://{user}:{password}@{host}:{port}/{db_name}?sslmode=require"
+    
+    return create_engine(db_url)
+
+# Inicializar la variable engine global para SQLAlchemy
+engine = get_db_engine()
+
 def get_db_connection():
-    # Obtener credenciales desde secretos o valores por defecto para pruebas locales
-    db_config = st.secrets.get("postgres", {
-        "host": "ep-tiny-cloud-b4h9eg0r-pooler.c-6.us-east-2.aws.neon.tech",
-        "database": "transmetro_db",
-        "user": "transmetro_db_owner",
-        "password": "   ",
-        "port": 5432
-    })
-    try:
-        conn = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
-        return conn
-    except Exception as e:
-        st.error(f"Error al conectar con la Base de Datos PostgreSQL: {e}")
-        return None
+    # Obtener credenciales desde secretos o valores por defecto
+    if "postgres" in st.secrets:
+        cfg = dict(st.secrets["postgres"])
+        cfg["sslmode"] = "require"
+        try:
+            return psycopg2.connect(**cfg, cursor_factory=RealDictCursor)
+        except Exception as e:
+            st.error(f"Error al conectar con PostgreSQL: {e}")
+            return None
+    else:
+        try:
+            conn = psycopg2.connect(
+                host="ep-tiny-cloud-b4h9eg0r-pooler.c-6.us-east-2.aws.neon.tech",
+                database="transmetro_db",
+                user="transmetro_db_owner",
+                password="TU_PASSWORD_AQUI",  # ⚠️ Coloca aquí tu contraseña de Neon
+                port=5432,
+                sslmode="require"  # ⚠️ Esencial para Neon
+            )
+            return conn
+        except Exception as e:
+            st.error(f"Error al conectar con PostgreSQL: {e}")
+            return None
 
 # -----------------------------------------------------------------------------
 # NAVEGACIÓN PRINCIPAL
