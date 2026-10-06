@@ -87,7 +87,7 @@ menu = st.sidebar.radio(
 # -----------------------------------------------------------------------------
 # MÓDULO 1: GESTIÓN DE LÍNEAS & RUTAS
 # -----------------------------------------------------------------------------
-if menu == "🗺️ Gestión de Líneas & Rutas":
+if menu == "🗺️️ Gestión de Líneas & Rutas":
     st.markdown('<p class="main-header">Gestión de Líneas y Esquema Visual de Paradas</p>', unsafe_allow_html=True)
 
     tab_ver, tab_crear_linea = st.tabs(["📌 Ver / Editar Línea y Paradas", "➕ Crear Nueva Línea"])
@@ -105,7 +105,7 @@ if menu == "🗺️ Gestión de Líneas & Rutas":
 
             with engine.connect() as conn:
                 query_ruta = text("""
-                    SELECT le.id_linea_estacion, le.orden_estacion, e.id_estacion, e.nombre as estacion, 
+                    SELECT le.orden_estacion, e.id_estacion, e.nombre as estacion, 
                            m.nombre as municipalidad, le.distancia_siguiente_km
                     FROM linea_estacion le
                     JOIN estacion e ON le.id_estacion = e.id_estacion
@@ -367,4 +367,4 @@ elif menu == "🚨 Operador de Estación":
             if aforo >= (cap * 1.5):
                 st.error("🚨 ALERTA DE SATURACIÓN (≥ 150%)")
             elif aforo >= cap:
-                st.warning("⚠️ Capacidad nominal alcanzada")
+                st.warning("⚠️️ Capacidad nominal alcanzada")
