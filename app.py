@@ -304,16 +304,129 @@ elif menu == OPCION_BUSES:
 # MÓDULO 3: ESTACIONES & PARQUEOS
 # -----------------------------------------------------------------------------
 elif menu == OPCION_ESTACIONES:
-    st.markdown('<p class="main-header">Gestión de Estaciones y Parqueos</p>', unsafe_allow_html=True)
-    with engine.connect() as conn:
-        df_estaciones = pd.read_sql("""
-            SELECT e.nombre as estacion, e.capacidad_maxima_pasajeros, m.nombre as municipalidad,
-                   COALESCE(p.nombre_parqueo, 'Sin Parqueo') as parqueo
-            FROM estacion e
-            JOIN municipalidad m ON e.id_municipalidad = m.id_municipalidad
-            LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion;
-        """, conn)
-    st.dataframe(df_estaciones, use_container_width=True)
+    st.markdown('<p class="main-header">Gestión de Estaciones, Municipalidades y Parqueos</p>', unsafe_allow_html=True)
+
+    tab_ver_est, tab_crear_est, tab_crear_parq = st.tabs([
+        "🏢 Ver Estaciones y Parqueos", 
+        "➕ Crear Nueva Estación", 
+        "🅿️ Registrar / Asignar Parqueo"
+    ])
+
+    # 1. PESTAÑA: VER ESTACIONES Y PARQUEOS
+    with tab_ver_est:
+        try:
+            with engine.connect() as conn:
+                query_estaciones = text("""
+                    SELECT e.id_estacion, e.nombre as estacion, e.capacidad_maxima_pasajeros, 
+                           m.nombre as municipalidad, 
+                           COALESCE(p.nombre_parqueo, 'Sin Parqueo') as parqueo,
+                           COALESCE(p.capacidad_buses, 0) as capacidad_buses_parqueo
+                    FROM estacion e
+                    JOIN municipalidad m ON e.id_municipalidad = m.id_municipalidad
+                    LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion
+                    ORDER BY e.nombre;
+                """)
+                df_estaciones = pd.read_sql(query_estaciones, conn)
+            st.dataframe(df_estaciones, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al cargar las estaciones: {e}")
+
+    # 2. PESTAÑA: CREAR NUEVA ESTACIÓN
+    with tab_crear_est:
+        st.subheader("➕ Registrar Nueva Estación de Bus")
+        try:
+            with engine.connect() as conn:
+                munis = pd.read_sql("SELECT id_municipalidad, nombre FROM municipalidad ORDER BY nombre;", conn)
+        except Exception:
+            munis = pd.DataFrame()
+
+        if not munis.empty:
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                nombre_estacion = st.text_input("Nombre de la Estación (ej. Estación San Mateo):")
+                capacidad_estacion = st.number_input("Capacidad Máxima de Pasajeros:", min_value=50, value=500, step=50)
+                muni_sel = st.selectbox("Municipalidad Perteneciente (Obligatorio):", munis["nombre"])
+                id_muni_sel = munis[munis["nombre"] == muni_sel]["id_municipalidad"].values[0]
+
+            with col_e2:
+                tiene_parqueo = st.checkbox("¿Desea crear un parqueo de buses para esta estación?")
+                if tiene_parqueo:
+                    nombre_parqueo = st.text_input("Nombre del Parqueo:", value=f"Parqueo {nombre_estacion}" if nombre_estacion else "Parqueo Central")
+                    capacidad_buses_parqueo = st.number_input("Capacidad de Buses en Parqueo:", min_value=1, value=15, step=1)
+                else:
+                    nombre_parqueo = None
+                    capacidad_buses_parqueo = 0
+
+            if st.button("Guardar Estación"):
+                if nombre_estacion.strip():
+                    try:
+                        with engine.begin() as conn:
+                            # Insertar Estación
+                            res = conn.execute(text("""
+                                INSERT INTO estacion (nombre, capacidad_maxima_pasajeros, aforo_actual_pasajeros, id_municipalidad)
+                                VALUES (:nombre, :cap, 0, :id_muni) RETURNING id_estacion;
+                            """), {"nombre": nombre_estacion.strip(), "cap": int(capacidad_estacion), "id_muni": int(id_muni_sel)})
+                            
+                            id_est_creada = res.fetchone()[0]
+
+                            # Insertar Parqueo si se marcó la casilla
+                            if tiene_parqueo and nombre_parqueo:
+                                conn.execute(text("""
+                                    INSERT INTO parqueo (nombre_parqueo, capacidad_buses, id_estacion)
+                                    VALUES (:nom_p, :cap_p, :id_e);
+                                """), {"nom_p": nombre_parqueo.strip(), "cap_p": int(capacidad_buses_parqueo), "id_e": int(id_est_creada)})
+
+                        st.success(f"✅ Estación '{nombre_estacion}' registrada exitosamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar la estación: {e}")
+                else:
+                    st.warning("Debe ingresar un nombre válido para la estación.")
+        else:
+            st.error("No hay municipalidades registradas en el sistema.")
+
+    # 3. PESTAÑA: REGISTRAR / ASIGNAR PARQUEO A ESTACIÓN EXISTENTE
+    with tab_crear_parq:
+        st.subheader("🅿️ Asignar Parqueo a Estación Existente")
+        try:
+            with engine.connect() as conn:
+                # Estaciones que no tienen parqueo asignado
+                query_sin_parqueo = text("""
+                    SELECT e.id_estacion, e.nombre 
+                    FROM estacion e
+                    LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion
+                    WHERE p.id_parqueo IS NULL
+                    ORDER BY e.nombre;
+                """)
+                estaciones_sin_p = pd.read_sql(query_sin_parqueo, conn)
+        except Exception:
+            estaciones_sin_p = pd.DataFrame()
+
+        if not estaciones_sin_p.empty:
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                est_p_sel = st.selectbox("Seleccionar Estación:", estaciones_sin_p["nombre"])
+                id_est_p_sel = estaciones_sin_p[estaciones_sin_p["nombre"] == est_p_sel]["id_estacion"].values[0]
+            with col_p2:
+                nom_p_nuevo = st.text_input("Nombre del Nuevo Parqueo:", value=f"Parqueo {est_p_sel}")
+                cap_p_nueva = st.number_input("Capacidad de Buses:", min_value=1, value=10, step=1)
+
+            if st.button("Guardar y Asignar Parqueo"):
+                if nom_p_nuevo.strip():
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(text("""
+                                INSERT INTO parqueo (nombre_parqueo, capacidad_buses, id_estacion)
+                                VALUES (:nom_p, :cap_p, :id_e);
+                            """), {"nom_p": nom_p_nuevo.strip(), "cap_p": int(cap_p_nueva), "id_e": int(id_est_p_sel)})
+                        st.success(f"✅ Parqueo '{nom_p_nuevo}' asignado correctamente a la estación '{est_p_sel}'.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al asignar parqueo: {e}")
+                else:
+                    st.warning("Ingrese un nombre válido para el parqueo.")
+        else:
+            st.info("Todas las estaciones registradas ya cuentan con un parqueo asignado.")
 
 # -----------------------------------------------------------------------------
 # MÓDULO 4: ACCESOS & GUARDIAS
