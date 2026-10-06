@@ -27,7 +27,7 @@ def get_db_engine():
     # Si existen secretos configurados en Streamlit Cloud, los usa; de lo contrario, usa las credenciales por defecto
     if "postgres" in st.secrets:
         cfg = st.secrets["postgres"]
-        db_url = f"postgresql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?sslmode=require"
+        db_url = f"postgresql+psycopg2://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?sslmode=require"
     else:
         # Tus credenciales directas de Neon
         user = "transmetro_db_owner"
@@ -35,7 +35,7 @@ def get_db_engine():
         host = "ep-tiny-cloud-b4h9eg0r-pooler.c-6.us-east-2.aws.neon.tech"
         port = 5432
         db_name = "transmetro_db"
-        db_url = f"postgresql://{user}:{password}@{host}:{port}/{db_name}?sslmode=require"
+        db_url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db_name}?sslmode=require"
     
     return create_engine(db_url)
 
