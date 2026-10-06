@@ -90,7 +90,7 @@ if menu == OPCION_LINEAS:
         if not lineas.empty:
             col_l1, col_l2 = st.columns([2, 1])
             with col_l1:
-                linea_seleccionada = st.selectbox("Seleccionar Línea:", lineas["nombre_linea"])
+                linea_seleccionada = st.selectbox("Seleccionar Línea a Gestionar:", lineas["nombre_linea"])
                 id_linea_sel = lineas[lineas["nombre_linea"] == linea_seleccionada]["id_linea"].values[0]
                 color_lin = lineas[lineas["nombre_linea"] == linea_seleccionada]["color_identificador"].values[0]
 
@@ -116,16 +116,67 @@ if menu == OPCION_LINEAS:
 
             st.divider()
 
-            # Visualización Dinámica del Recorrido
-            st.subheader(f"🚏 Esquema de Recorrido: {linea_seleccionada}")
+            # -----------------------------------------------------------------
+            # 3. ESQUEMA DE RECORRIDO VISUAL / GRÁFICO TIPO METRO
+            # -----------------------------------------------------------------
+            st.subheader(f"🚏 Esquema Visual de Recorrido: {linea_seleccionada}")
+            
             if not df_ruta.empty:
+                total_paradas = len(df_ruta)
                 for idx, row in df_ruta.iterrows():
+                    num_parada = row['orden_estacion']
+                    nombre_est = row['estacion']
+                    muni = row['municipalidad']
+                    dist_sig = row['distancia_siguiente_km']
+                    
+                    # Dibujar Tarjeta de Estación con estilo de Línea
                     st.markdown(f"""
-                        <div class="station-card">
-                            <b>Parada #{row['orden_estacion']} - {row['estacion']}</b> ({row['municipalidad']})<br>
-                            <small>📍 Distancia a la siguiente parada: <b>{row['distancia_siguiente_km']} km</b></small>
+                        <div style="
+                            background-color: #FFFFFF;
+                            border-left: 8px solid #1F4E78;
+                            border-radius: 8px;
+                            padding: 12px 18px;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+                            margin-bottom: 5px;
+                        ">
+                            <span style="font-size: 18px; font-weight: bold; color: #1F4E78;">
+                                🛑 Parada #{num_parada}: {nombre_est}
+                            </span>
+                            <span style="font-size: 13px; color: #6c757d; margin-left: 10px;">
+                                ({muni})
+                            </span>
                         </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Dibujar conector / flecha de recorrido si no es la última estación
+                    if idx < total_paradas - 1:
+                        st.markdown(f"""
+                            <div style="
+                                border-left: 3px dashed #1F4E78;
+                                margin-left: 20px;
+                                padding-left: 15px;
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                color: #28a745;
+                                font-weight: 500;
+                                font-size: 14px;
+                            ">
+                                ⬇️ <b>{dist_sig:.2f} km</b> hacia la siguiente estación
+                            </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                            <div style="
+                                margin-left: 20px;
+                                padding-left: 15px;
+                                padding-top: 5px;
+                                color: #dc3545;
+                                font-weight: bold;
+                                font-size: 13px;
+                            ">
+                                🏁 <b>Estación Terminal de la Línea</b>
+                            </div>
+                        """, unsafe_allow_html=True)
             else:
                 st.info("Esta línea aún no cuenta con estaciones asignadas.")
 
@@ -134,31 +185,76 @@ if menu == OPCION_LINEAS:
 
             with col_ag1:
                 st.subheader("➕ Agregar Parada a la Ruta")
+                
+                # -------------------------------------------------------------
+                # 1. FILTRAR ESTACIONES PARA NO PERMITIR DUPLICADOS EN ESTA LÍNEA
+                # -------------------------------------------------------------
                 with engine.connect() as conn:
-                    estaciones_todas = pd.read_sql("SELECT id_estacion, nombre FROM estacion ORDER BY nombre;", conn)
+                    query_estaciones_disponibles = text("""
+                        SELECT id_estacion, nombre 
+                        FROM estacion 
+                        WHERE id_estacion NOT IN (
+                            SELECT id_estacion FROM linea_estacion WHERE id_linea = :id_linea
+                        )
+                        ORDER BY nombre;
+                    """)
+                    estaciones_disp = pd.read_sql(query_estaciones_disponibles, conn, params={"id_linea": int(id_linea_sel)})
 
-                if not estaciones_todas.empty:
-                    est_nueva = st.selectbox("Seleccionar Estación:", estaciones_todas["nombre"])
-                    id_est_nueva = estaciones_todas[estaciones_todas["nombre"] == est_nueva]["id_estacion"].values[0]
-                    orden_nuevo = st.number_input("Número de Parada (1, 2, 3...):", min_value=1, value=len(df_ruta)+1)
-                    dist_nueva = st.number_input("Distancia a sig. parada (km):", min_value=0.0, value=1.5, step=0.1)
+                if not estaciones_disp.empty:
+                    est_nueva = st.selectbox("Seleccionar Estación (No asignadas a esta línea):", estaciones_disp["nombre"])
+                    id_est_nueva = estaciones_disp[estaciones_disp["nombre"] == est_nueva]["id_estacion"].values[0]
+                    orden_nuevo = len(df_ruta) + 1
+                    
+                    # ---------------------------------------------------------
+                    # 2. SI ES LA PRIMERA ESTACIÓN, DISTANCIA ES 0.0 KM
+                    # ---------------------------------------------------------
+                    if len(df_ruta) == 0:
+                        st.info("📌 Esta es la **primera estación** de la línea, no requiere ingresar distancia.")
+                        dist_nueva = 0.0
+                    else:
+                        dist_nueva = st.number_input(
+                            f"Distancia desde la Estación #{len(df_ruta)} a esta estación (km):", 
+                            min_value=0.1, 
+                            value=1.5, 
+                            step=0.1
+                        )
 
-                    if st.button("Guardar Parada"):
+                    if st.button("Guardar Parada en la Ruta"):
                         try:
                             with engine.begin() as conn:
+                                # Si ya había estaciones, actualizar la distancia_siguiente_km de la estación anterior
+                                if len(df_ruta) > 0:
+                                    ultima_estacion_id = df_ruta.iloc[-1]['id_estacion']
+                                    conn.execute(text("""
+                                        UPDATE linea_estacion 
+                                        SET distancia_siguiente_km = :dist
+                                        WHERE id_linea = :id_l AND id_estacion = :id_e;
+                                    """), {
+                                        "dist": float(dist_nueva),
+                                        "id_l": int(id_linea_sel),
+                                        "id_e": int(ultima_estacion_id)
+                                    })
+
+                                # Insertar la nueva estación
                                 conn.execute(text("""
                                     INSERT INTO linea_estacion (id_linea, id_estacion, orden_estacion, distancia_siguiente_km)
-                                    VALUES (:id_linea, :id_estacion, :orden, :dist);
-                                """), {"id_linea": int(id_linea_sel), "id_estacion": int(id_est_nueva), "orden": int(orden_nuevo), "dist": float(dist_nueva)})
-                            st.success("Parada agregada correctamente.")
+                                    VALUES (:id_linea, :id_estacion, :orden, 0.0);
+                                """), {
+                                    "id_linea": int(id_linea_sel), 
+                                    "id_estacion": int(id_est_nueva), 
+                                    "orden": int(orden_nuevo)
+                                })
+
+                            st.success("✅ Estación agregada a la línea correctamente.")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error al agregar parada: {e}")
+                else:
+                    st.warning("⚠️ No hay más estaciones disponibles para asignar a esta línea. Todas las estaciones ya están agregadas o no existen estaciones registradas.")
 
             with col_ag2:
                 st.subheader("🚌 Asignar Bus a esta Línea")
                 with engine.connect() as conn:
-                    # Envolver la consulta con text() para corregir la sintaxis de parámetros
                     query_buses = text("""
                         SELECT b.id_bus, b.numero_unidad, p.nombres || ' ' || p.apellidos as piloto
                         FROM bus b
@@ -171,7 +267,7 @@ if menu == OPCION_LINEAS:
                     bus_sel = st.selectbox("Bus Disponible (Requiere Piloto):", buses_disp["numero_unidad"] + " - Piloto: " + buses_disp["piloto"])
                     id_bus_sel = buses_disp[buses_disp["numero_unidad"] == bus_sel.split(" - ")[0]]["id_bus"].values[0]
 
-                    if st.button("Asignar Bus"):
+                    if st.button("Asignar Bus a la Línea"):
                         with engine.begin() as conn:
                             conn.execute(text("UPDATE bus SET id_linea = :id_l WHERE id_bus = :id_b;"),
                                          {"id_l": int(id_linea_sel), "id_b": int(id_bus_sel)})
@@ -186,7 +282,7 @@ if menu == OPCION_LINEAS:
         st.subheader("➕ Registrar Nueva Línea de Transmetro")
         try:
             with engine.connect() as conn:
-                munis = pd.read_sql("SELECT id_municipalidad, nombre FROM municipalidad;", conn)
+                munis = pd.read_sql("SELECT id_municipalidad, nombre FROM municipalidad ORDER BY nombre;", conn)
         except Exception:
             munis = pd.DataFrame()
 
@@ -200,19 +296,21 @@ if menu == OPCION_LINEAS:
                 id_muni_linea = munis[munis["nombre"] == muni_linea]["id_municipalidad"].values[0]
 
             if st.button("Guardar Nueva Línea"):
-                if nom_linea:
+                if nom_linea.strip():
                     try:
                         with engine.begin() as conn:
                             conn.execute(text("""
                                 INSERT INTO linea (nombre_linea, color_identificador, id_municipalidad)
                                 VALUES (:nom, :col, :id_m);
-                            """), {"nom": nom_linea, "col": color_linea, "id_m": int(id_muni_linea)})
+                            """), {"nom": nom_linea.strip(), "col": color_linea.strip(), "id_m": int(id_muni_linea)})
                         st.success(f"Línea '{nom_linea}' creada exitosamente.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al crear línea: {e}")
+                else:
+                    st.warning("Ingrese un nombre válido para la línea.")
         else:
-            st.error("No hay municipalidades registradas. Ejecuta el script de datos iniciales (`seed_data.sql`).")
+            st.error("No hay municipalidades registradas.")
 
 # -----------------------------------------------------------------------------
 # MÓDULO 2: FLOTA DE BUSES & PILOTOS
