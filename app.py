@@ -96,7 +96,6 @@ if not st.session_state["logged_in"]:
             else:
                 st.error("⚠️ Usuario o contraseña incorrectos.")
         
-        st.info("💡 **Credenciales de prueba:**\n- **Admin:** `admin` / `admin123`\n- **Operador:** `operador` / `operador123`\n- **Flota:** `flota` / `flota123`")
     st.stop()  # Detiene la ejecución si no ha iniciado sesión
 
 # -----------------------------------------------------------------------------
