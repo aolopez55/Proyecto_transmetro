@@ -378,24 +378,34 @@ elif menu == OPCION_BUSES:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar piloto: {e}")
-
 # -----------------------------------------------------------------------------
-# MÓDULO 3: ESTACIONES & PARQUEOS
+# MÓDULO 3: ESTACIONES, PARQUEOS & MUNICIPALIDADES
 # -----------------------------------------------------------------------------
 elif menu == OPCION_ESTACIONES:
-    st.markdown('<p class="main-header">Gestión de Estaciones y Parqueos</p>', unsafe_allow_html=True)
-    tab_ver_est, tab_crear_est, tab_crear_parq = st.tabs(["🏢 Ver Estaciones y Parqueos", "➕ Crear Nueva Estación", "🅿️ Registrar / Asignar Parqueo"])
+    st.markdown('<p class="main-header">Gestión de Estaciones, Parqueos y Municipalidades</p>', unsafe_allow_html=True)
+    
+    tab_ver_est, tab_crear_est, tab_crear_parq, tab_muni = st.tabs([
+        "🏢 Ver Estaciones y Parqueos", 
+        "➕ Crear Nueva Estación", 
+        "🅿️ Registrar / Asignar Parqueo",
+        "🏛️ Municipalidades"
+    ])
 
+    # 1. PESTAÑA: VER ESTACIONES Y PARQUEOS
     with tab_ver_est:
-        with engine.connect() as conn:
-            df_estaciones = pd.read_sql("""
-                SELECT e.id_estacion, e.nombre as estacion, e.capacidad_maxima_pasajeros, 
-                       m.nombre as municipalidad, COALESCE(p.nombre_parqueo, 'Sin Parqueo') as parqueo
-                FROM estacion e JOIN municipalidad m ON e.id_municipalidad = m.id_municipalidad
-                LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion ORDER BY e.nombre;
-            """, conn)
-        st.dataframe(df_estaciones, use_container_width=True)
+        try:
+            with engine.connect() as conn:
+                df_estaciones = pd.read_sql("""
+                    SELECT e.id_estacion, e.nombre as estacion, e.capacidad_maxima_pasajeros, 
+                           m.nombre as municipalidad, COALESCE(p.nombre_parqueo, 'Sin Parqueo') as parqueo
+                    FROM estacion e JOIN municipalidad m ON e.id_municipalidad = m.id_municipalidad
+                    LEFT JOIN parqueo p ON p.id_estacion = e.id_estacion ORDER BY e.nombre;
+                """, conn)
+            st.dataframe(df_estaciones, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al cargar las estaciones: {e}")
 
+    # 2. PESTAÑA: CREAR NUEVA ESTACIÓN
     with tab_crear_est:
         st.subheader("➕ Registrar Nueva Estación de Bus")
         with engine.connect() as conn:
@@ -430,7 +440,12 @@ elif menu == OPCION_ESTACIONES:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al guardar la estación: {e}")
+                else:
+                    st.warning("Ingrese un nombre válido.")
+        else:
+            st.warning("⚠️ No hay municipalidades registradas. Utiliza la pestaña '🏛️ Municipalidades' para agregar la primera.")
 
+    # 3. PESTAÑA: REGISTRAR / ASIGNAR PARQUEO
     with tab_crear_parq:
         st.subheader("🅿️ Asignar Parqueo a Estación Existente")
         with engine.connect() as conn:
@@ -455,7 +470,40 @@ elif menu == OPCION_ESTACIONES:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al asignar parqueo: {e}")
+                else:
+                    st.warning("Ingrese un nombre válido.")
+        else:
+            st.info("Todas las estaciones registradas ya cuentan con parqueo.")
 
+    # 4. PESTAÑA NUEVA: GESTIÓN DE MUNICIPALIDADES
+    with tab_muni:
+        st.subheader("🏛️ Municipalidades Registradas")
+        try:
+            with engine.connect() as conn:
+                df_munis = pd.read_sql("SELECT id_municipalidad, nombre FROM municipalidad ORDER BY nombre;", conn)
+            st.dataframe(df_munis, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error al cargar municipalidades: {e}")
+
+        st.divider()
+        st.subheader("➕ Agregar Nueva Municipalidad")
+        col_m1, col_m2 = st.columns([2, 1])
+        with col_m1:
+            nueva_muni = st.text_input("Nombre de la Municipalidad (ej. Municipalidad de Mixco):")
+        with col_m2:
+            st.write("") # Espaciador
+            st.write("")
+            if st.button("Guardar Municipalidad", use_container_width=True):
+                if nueva_muni.strip():
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(text("INSERT INTO municipalidad (nombre) VALUES (:nom);"), {"nom": nueva_muni.strip()})
+                        st.success(f"✅ Municipalidad '{nueva_muni.strip()}' agregada correctamente.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar municipalidad: {e}")
+                else:
+                    st.warning("Ingrese un nombre válido para la municipalidad.")
 # -----------------------------------------------------------------------------
 # MÓDULO 4: ACCESOS & GUARDIAS
 # -----------------------------------------------------------------------------
